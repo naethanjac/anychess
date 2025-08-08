@@ -374,7 +374,7 @@ export default function Home() {
         <div>
           <Chessboard
             id="board"
-            position={edit ? (editPos as any) : fen}   {/* <-- key fix: show edits live */}
+            position={edit ? (editPos as any) : fen}   
             arePiecesDraggable={!edit}
             onPieceDrop={onPieceDrop}
             onSquareClick={onSquareClick}
