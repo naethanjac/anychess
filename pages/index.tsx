@@ -13,34 +13,40 @@ type PlayMode = 'none' | 'bot' | 'pass' | 'online';
 type PosObj = Record<string, string>; // { e4: 'wP', ... }
 
 const FILES = ['a','b','c','d','e','f','g','h'] as const;
-
 function fileIndex(f: string) { return FILES.indexOf(f as any); }
 
-// Auto-detect en passant target square per FEN spec:
-// - Only set if an actual EP capture is possible
-// - If multiple candidates exist, return "-" (ambiguous)
-function autoDetectEnPassant(obj: PosObj, turn: 'w'|'b'): string {
-  // If it's White to move, Black just moved (two-step) -> look for black pawn on rank 5, EP square on rank 6.
-  // If it's Black to move, White just moved -> look for white pawn on rank 4, EP square on rank 3.
-  const cands: string[] = [];
+function symbolToPiece(sym: string): string {
+  const white = sym === sym.toUpperCase();
+  const t = sym.toUpperCase();
+  const map: Record<string,string> = { K:'K', Q:'Q', R:'R', B:'B', N:'N', P:'P' };
+  const m = map[t];
+  if (!m) throw new Error('bad symbol');
+  return (white ? 'w' : 'b') + m;
+}
 
+function pieceToSymbol(p: string): string {
+  const map: Record<string,string> = {
+    wK:'K', wQ:'Q', wR:'R', wB:'B', wN:'N', wP:'P',
+    bK:'k', bQ:'q', bR:'r', bB:'b', bN:'n', bP:'p',
+  };
+  return map[p];
+}
+
+// --- Auto-detect en passant (only if exactly one capture is legal) ---
+function autoDetectEnPassant(obj: PosObj, turn: 'w'|'b'): string {
+  const cands: string[] = [];
   if (turn === 'w') {
-    // black just moved, scan black pawns on rank 5
     for (const f of FILES) {
       const sq = `${f}5`;
       if (obj[sq] !== 'bP') continue;
       const idx = fileIndex(f);
       const ep = `${f}6`;
-      if (obj[ep]) continue; // must be empty
-      // a white pawn on rank 5 adjacent can capture up to f6
+      if (obj[ep]) continue;
       const left = idx > 0 ? `${FILES[idx-1]}5` : '';
       const right = idx < 7 ? `${FILES[idx+1]}5` : '';
-      if ((left && obj[left] === 'wP') || (right && obj[right] === 'wP')) {
-        cands.push(ep);
-      }
+      if ((left && obj[left] === 'wP') || (right && obj[right] === 'wP')) cands.push(ep);
     }
   } else {
-    // turn === 'b' -> white just moved, scan white pawns on rank 4
     for (const f of FILES) {
       const sq = `${f}4`;
       if (obj[sq] !== 'wP') continue;
@@ -49,22 +55,18 @@ function autoDetectEnPassant(obj: PosObj, turn: 'w'|'b'): string {
       if (obj[ep]) continue;
       const left = idx > 0 ? `${FILES[idx-1]}4` : '';
       const right = idx < 7 ? `${FILES[idx+1]}4` : '';
-      if ((left && obj[left] === 'bP') || (right && obj[right] === 'bP')) {
-        cands.push(ep);
-      }
+      if ((left && obj[left] === 'bP') || (right && obj[right] === 'bP')) cands.push(ep);
     }
   }
-
-  // exactly one legal capture → set it, else none
   return cands.length === 1 ? cands[0] : '-';
 }
 
+// Build FEN from editor object
 function posObjToFen(
   obj: PosObj,
   turn: 'w'|'b',
   castlingFlags: { K: boolean; Q: boolean; k: boolean; q: boolean; }
 ): { fen: string | null, error?: string } {
-  // Build placement from rank 8 to 1
   let placement = '';
   let wK = 0, bK = 0;
 
@@ -77,16 +79,11 @@ function posObjToFen(
 
       if (empty) { placement += String(empty); empty = 0; }
 
-      // engine limitation: no pawns on rank 1/8
       if ((r === 1 || r === 8) && (p === 'wP' || p === 'bP')) {
         return { fen: null, error: `Pawns cannot be on rank ${r}. Promote them.` };
       }
 
-      const map: Record<string,string> = {
-        wK:'K', wQ:'Q', wR:'R', wB:'B', wN:'N', wP:'P',
-        bK:'k', bQ:'q', bR:'r', bB:'b', bN:'n', bP:'p',
-      };
-      const sym = map[p];
+      const sym = pieceToSymbol(p);
       if (!sym) return { fen: null, error: `Unknown piece: ${p}` };
       if (sym === 'K') wK++;
       if (sym === 'k') bK++;
@@ -106,9 +103,31 @@ function posObjToFen(
     (castlingFlags.k ? 'k' : '') +
     (castlingFlags.q ? 'q' : '') || '-';
 
-  const ep = autoDetectEnPassant(obj, turn); // '-' or square like 'e3' / 'd6'
+  const ep = autoDetectEnPassant(obj, turn);
   const fen = `${placement} ${turn} ${castle} ${ep} 0 1`;
   return { fen };
+}
+
+// Parse current FEN to prefill the editor
+function fenToPosObj(fen: string): {
+  pos: PosObj, turn: 'w'|'b', castle: {K:boolean;Q:boolean;k:boolean;q:boolean}
+} {
+  const [placement, turn, castle] = fen.split(' ');
+  const pos: PosObj = {};
+  let rank = 8;
+  let file = 0;
+  for (const ch of placement) {
+    if (ch === '/') { rank--; file = 0; continue; }
+    if (/\d/.test(ch)) { file += parseInt(ch, 10); continue; }
+    const sq = `${FILES[file]}${rank}`;
+    pos[sq] = symbolToPiece(ch);
+    file++;
+  }
+  return {
+    pos,
+    turn: (turn === 'b' ? 'b' : 'w'),
+    castle: { K: castle?.includes('K') || false, Q: castle?.includes('Q') || false, k: castle?.includes('k') || false, q: castle?.includes('q') || false }
+  };
 }
 
 export default function Home() {
@@ -189,7 +208,18 @@ export default function Home() {
     return true;
   }
 
-  // Editor interactions
+  // ---------- EDITOR ----------
+  function toggleEdit() {
+    if (!edit) {
+      // entering edit: prefill from current FEN
+      const { pos, turn, castle } = fenToPosObj(fen);
+      setEditPos(pos);
+      setEditTurn(turn);
+      setCastleWK(castle.K); setCastleWQ(castle.Q); setCastleBK(castle.k); setCastleBQ(castle.q);
+    }
+    setEdit(v => !v);
+  }
+
   function onSquareClick(square: string) {
     if (!edit) return;
     const next = { ...editPos };
@@ -206,13 +236,14 @@ export default function Home() {
       const c = new Chess(f);
       chessRef.current = c;
       setFen(f);
-      setMode('sandbox'); // user edited sandbox
+      setMode('sandbox');
       setEdit(false);
       setStatus('');
     } catch {
       setStatus('Position rejected by engine.');
     }
   }
+  // ---------- EDITOR END ----------
 
   // Bot (works in strict & sandbox)
   function maybeBotMove() {
@@ -280,10 +311,9 @@ export default function Home() {
   }
 
   const canUseRealtime = !!supabase;
-
   useEffect(() => { maybeBotMove(); /* eslint-disable-next-line */ }, [playMode, mode, myColor]);
 
-  // Preview EP square while editing
+  // Preview EP while editing
   const previewEP = autoDetectEnPassant(editPos, editTurn);
 
   return (
@@ -310,7 +340,7 @@ export default function Home() {
             {canUseRealtime && <option value="online">Online (Supabase)</option>}
           </select>
         </label>
-        <button onClick={() => setEdit(v => !v)}>{edit ? 'Cancel Edit' : 'Edit Board'}</button>
+        <button onClick={toggleEdit}>{edit ? 'Cancel Edit' : 'Edit Board'}</button>
         {edit && <button onClick={commitEdit}>Apply Edit</button>}
         <button onClick={resetToStart}>Reset</button>
         <button onClick={() => navigator.clipboard.writeText(exportFEN())}>Copy FEN</button>
@@ -321,7 +351,7 @@ export default function Home() {
           <h3 style={{ marginTop: 0 }}>Editor</h3>
           <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
             <PiecePalette selected={selectedPalette} onSelect={setSelectedPalette} />
-            <label>Turn: {' '}
+            <label>Turn:{' '}
               <select value={editTurn} onChange={e => setEditTurn(e.target.value as 'w'|'b')}>
                 <option value="w">White</option>
                 <option value="b">Black</option>
@@ -344,7 +374,7 @@ export default function Home() {
         <div>
           <Chessboard
             id="board"
-            position={fen}
+            position={edit ? (editPos as any) : fen}   {/* <-- key fix: show edits live */}
             arePiecesDraggable={!edit}
             onPieceDrop={onPieceDrop}
             onSquareClick={onSquareClick}
