@@ -1,0 +1,21 @@
+{
+  "name": "anychess",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "chess.js": "^1.0.0",
+    "nanoid": "^5.0.6",
+    "next": "14.2.5",
+    "react": "18.2.0",
+    "react-chessboard": "^4.4.3",
+    "react-dom": "18.2.0",
+    "zustand": "^4.5.2"
+  }
+}
